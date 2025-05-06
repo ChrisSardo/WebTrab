@@ -1,23 +1,24 @@
-import React, { useEffect, useState } from "react";
-import { auth, db } from "../firebase/config";
-import { signOut } from "firebase/auth";
-import { collection, addDoc, getDocs, doc, deleteDoc } from "firebase/firestore";
-import { useNavigate } from "react-router-dom";
+import React, { useEffect, useState } from 'react';
+import { collection, addDoc, getDocs, doc, updateDoc, deleteDoc } from 'firebase/firestore';
+import { db, auth } from '../firebase/config';
+import TaskModal from '../components/TaskModal';
+
+interface Atividade {
+  nome: string;
+  concluida: boolean;
+}
 
 interface Tarefa {
   id: string;
   titulo: string;
   descricao: string;
+  status: 'todo' | 'doing' | 'done';
+  atividades: Atividade[];
 }
 
-export default function Tasks() {
+const Tasks: React.FC = () => {
   const [tarefas, setTarefas] = useState<Tarefa[]>([]);
-  const [titulo, setTitulo] = useState("");
-  const [descricao, setDescricao] = useState("");
-  const [showAddModal, setShowAddModal] = useState(false);
-  const [showDeleteModal, setShowDeleteModal] = useState(false);
-  const [taskToDelete, setTaskToDelete] = useState<string | null>(null);
-  const navigate = useNavigate();
+  const [showModal, setShowModal] = useState(false);
 
   useEffect(() => {
     buscarTarefas();
@@ -25,120 +26,146 @@ export default function Tasks() {
 
   const buscarTarefas = async () => {
     if (!auth.currentUser) return;
-    const tarefasRef = collection(db, "users", auth.currentUser.uid, "tasks");
+    const tarefasRef = collection(db, 'users', auth.currentUser.uid, 'tasks');
     const snapshot = await getDocs(tarefasRef);
-    const lista = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Tarefa));
+    const lista = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() } as Tarefa));
     setTarefas(lista);
   };
 
-  const handleAddTask = () => {
-    setShowAddModal(true);
-  };
-
-  const confirmAddTask = async () => {
+  const criarTarefa = async (titulo: string, descricao: string, atividades: Atividade[]) => {
     if (!auth.currentUser) return;
-    await addDoc(collection(db, "users", auth.currentUser.uid, "tasks"), { titulo, descricao });
-    setTitulo("");
-    setDescricao("");
+    await addDoc(collection(db, 'users', auth.currentUser.uid, 'tasks'), {
+      titulo,
+      descricao,
+      status: 'todo',
+      atividades,
+    });
     buscarTarefas();
-    setShowAddModal(false);
   };
 
-  const handleDeleteTask = (id: string) => {
-    setTaskToDelete(id);
-    setShowDeleteModal(true);
-  };
-
-  const confirmDeleteTask = async () => {
-    if (!auth.currentUser || !taskToDelete) return;
-    await deleteDoc(doc(db, "users", auth.currentUser.uid, "tasks", taskToDelete));
+  const atualizarStatus = async (id: string, novoStatus: 'todo' | 'doing' | 'done') => {
+    if (!auth.currentUser) return;
+    const tarefaRef = doc(db, 'users', auth.currentUser.uid, 'tasks', id);
+    await updateDoc(tarefaRef, { status: novoStatus });
     buscarTarefas();
-    setShowDeleteModal(false);
-    setTaskToDelete(null);
   };
 
-  const logout = async () => {
-    await signOut(auth);
-    navigate("/login");
+  const toggleAtividade = async (tarefaId: string, index: number) => {
+    if (!auth.currentUser) return;
+    const tarefa = tarefas.find((t) => t.id === tarefaId);
+    if (!tarefa) return;
+    const novasAtividades = [...tarefa.atividades];
+    novasAtividades[index].concluida = !novasAtividades[index].concluida;
+    const tarefaRef = doc(db, 'users', auth.currentUser.uid, 'tasks', tarefaId);
+    await updateDoc(tarefaRef, { atividades: novasAtividades });
+    buscarTarefas();
+  };
+
+  const excluirTarefa = async (id: string) => {
+    if (!auth.currentUser) return;
+    await deleteDoc(doc(db, 'users', auth.currentUser.uid, 'tasks', id));
+    buscarTarefas();
+  };
+
+  const calcularProgresso = (atividades: Atividade[]) => {
+    if (atividades.length === 0) return 0;
+    const concluidas = atividades.filter((a) => a.concluida).length;
+    return Math.round((concluidas / atividades.length) * 100);
+  };
+
+  const colunas: { [key: string]: string } = {
+    todo: 'A Fazer',
+    doing: 'Em Execução',
+    done: 'Concluídas',
   };
 
   return (
     <div className="p-6 bg-gray-100 min-h-screen">
       <div className="flex justify-between items-center mb-6">
-        <h1 className="text-3xl font-bold">Minhas Tarefas</h1>
-        <button onClick={logout} className="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600">Sair</button>
+        <h1 className="text-3xl font-bold">Quadro Kanban</h1>
+        <button
+          onClick={() => setShowModal(true)}
+          className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700"
+        >
+          Nova Tarefa
+        </button>
       </div>
 
-      {/* Formulário para adicionar tarefa */}
-      <form onSubmit={(e) => { e.preventDefault(); handleAddTask(); }} className="bg-white p-6 rounded shadow mb-6">
-        <input
-          type="text"
-          placeholder="Título"
-          value={titulo}
-          onChange={(e) => setTitulo(e.target.value)}
-          className="p-3 border rounded w-full mb-4"
-          required
-        />
-        <textarea
-          placeholder="Descrição"
-          value={descricao}
-          onChange={(e) => setDescricao(e.target.value)}
-          className="p-3 border rounded w-full mb-4"
-          required
-        />
-        <button type="submit" className="bg-blue-600 text-white py-2 rounded w-full hover:bg-blue-700">
-          Adicionar Tarefa
-        </button>
-      </form>
-
-      {/* Lista de tarefas */}
-      <div className="space-y-4">
-        {tarefas.map((tarefa) => (
-          <div key={tarefa.id} className="bg-white p-4 rounded shadow flex justify-between items-center">
-            <div>
-              <h2 className="font-bold">{tarefa.titulo}</h2>
-              <p className="text-sm text-gray-500">{tarefa.descricao}</p>
-            </div>
-            <button onClick={() => handleDeleteTask(tarefa.id)} className="bg-red-400 text-white px-3 py-1 rounded hover:bg-red-500">
-              Excluir
-            </button>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        {Object.entries(colunas).map(([status, titulo]) => (
+          <div key={status} className="bg-white p-4 rounded shadow">
+            <h2 className="text-xl font-semibold mb-4">{titulo}</h2>
+            {tarefas
+              .filter((t) => t.status === status)
+              .map((tarefa) => (
+                <div key={tarefa.id} className="bg-gray-100 p-3 rounded mb-3">
+                  <h3 className="font-bold">{tarefa.titulo}</h3>
+                  <p className="text-sm mb-2">{tarefa.descricao}</p>
+                  <p className="text-sm mb-2">
+                    Progresso: {calcularProgresso(tarefa.atividades)}%
+                  </p>
+                  <ul className="mb-2">
+                    {tarefa.atividades.map((atividade, index) => (
+                      <li key={index} className="flex items-center">
+                        <input
+                          type="checkbox"
+                          checked={atividade.concluida}
+                          onChange={() => toggleAtividade(tarefa.id, index)}
+                          className="mr-2"
+                        />
+                        <span className={atividade.concluida ? 'line-through text-gray-400' : ''}>
+                          {atividade.nome}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                  <div className="flex flex-wrap justify-between items-center mt-2 gap-2">
+                    <div className="flex gap-2">
+                      {status !== 'todo' && (
+                        <button
+                          onClick={() => atualizarStatus(tarefa.id, 'todo')}
+                          className="px-2 py-1 text-sm bg-blue-100 hover:bg-blue-200 rounded"
+                        >
+                          A Fazer
+                        </button>
+                      )}
+                      {status !== 'doing' && (
+                        <button
+                          onClick={() => atualizarStatus(tarefa.id, 'doing')}
+                          className="px-2 py-1 text-sm bg-yellow-100 hover:bg-yellow-200 rounded"
+                        >
+                          Em Execução
+                        </button>
+                      )}
+                      {status !== 'done' && (
+                        <button
+                          onClick={() => atualizarStatus(tarefa.id, 'done')}
+                          className="px-2 py-1 text-sm bg-green-100 hover:bg-green-200 rounded"
+                        >
+                          Concluída
+                        </button>
+                      )}
+                    </div>
+                    <button
+                      onClick={() => excluirTarefa(tarefa.id)}
+                      className="text-sm text-red-500 hover:text-red-700"
+                    >
+                      Excluir
+                    </button>
+                  </div>
+                </div>
+              ))}
           </div>
         ))}
       </div>
 
-      {/* Modal de adicionar tarefa */}
-      {showAddModal && (
-        <div className="fixed inset-0 flex items-center justify-center bg-black bg-opacity-50 z-50">
-          <div className="bg-white p-6 rounded-lg shadow-lg">
-            <h2 className="text-xl font-bold mb-4">Deseja adicionar esta tarefa?</h2>
-            <div className="flex justify-end gap-4">
-              <button onClick={() => setShowAddModal(false)} className="px-4 py-2 bg-gray-400 text-white rounded hover:bg-gray-500">
-                Cancelar
-              </button>
-              <button onClick={confirmAddTask} className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700">
-                Confirmar
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Modal de excluir tarefa */}
-      {showDeleteModal && (
-        <div className="fixed inset-0 flex items-center justify-center bg-black bg-opacity-50 z-50">
-          <div className="bg-white p-6 rounded-lg shadow-lg">
-            <h2 className="text-xl font-bold mb-4">Tem certeza que deseja excluir esta tarefa?</h2>
-            <div className="flex justify-end gap-4">
-              <button onClick={() => setShowDeleteModal(false)} className="px-4 py-2 bg-gray-400 text-white rounded hover:bg-gray-500">
-                Cancelar
-              </button>
-              <button onClick={confirmDeleteTask} className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700">
-                Excluir
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <TaskModal
+        isOpen={showModal}
+        onClose={() => setShowModal(false)}
+        onSave={criarTarefa}
+      />
     </div>
   );
-}
+};
+
+export default Tasks;
